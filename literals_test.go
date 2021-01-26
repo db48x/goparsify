@@ -82,6 +82,21 @@ func TestStringLit(t *testing.T) {
 	})
 }
 
+func TestUnicodeStringLiteral(t *testing.T) {
+	// TODO(db48x): I really ought to have a few more tests here
+	parser := UnicodeStringLiteral()
+	t.Run("test “” match", func(t *testing.T) {
+		result, p := runParser(`“hello”`, parser)
+		require.Equal(t, `hello`, result.Token)
+		require.Equal(t, "", p.Get())
+	})
+	t.Run("test ｢｣ match", func(t *testing.T) {
+		result, p := runParser(`｢“hello”｣`, parser)
+		require.Equal(t, `“hello”`, result.Token)
+		require.Equal(t, "", p.Get())
+	})
+}
+
 func TestUnhex(t *testing.T) {
 	tests := map[int64]string{
 		0xF:        "F",
@@ -174,3 +189,21 @@ func TestNumberLit(t *testing.T) {
 		require.Equal(t, 0, p.Pos)
 	})
 }
+
+//func RunesFromRange(tab *unicode.RangeTable) <-chan rune {
+//	res := make(chan rune)
+//	go func() {
+//		for _, r16 := range tab.R16 {
+//			for c := r16.Lo; c <= r16.Hi; c += r16.Stride {
+//				res <- rune(c)
+//			}
+//		}
+//		for _, r32 := range tab.R32 {
+//			for c := r32.Lo; c <= r32.Hi; c += r32.Stride {
+//				res <- rune(c)
+//			}
+//		}
+//		close(res)
+//	}()
+//	return res
+//}

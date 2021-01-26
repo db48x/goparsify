@@ -3,90 +3,197 @@ package goparsify
 import (
 	"bytes"
 	"strconv"
+	"unicode"
 	"unicode/utf8"
 )
 
+func stringImpl(ps *State, node *Result, closer rune) bool {
+	var end = node.Start
+
+	inputLen := len(ps.Input)
+	var buf *bytes.Buffer
+
+	for end < inputLen {
+		current, size := utf8.DecodeRuneInString(ps.Input[end:])
+		switch current {
+		case '\\':
+			if end+size >= inputLen {
+				ps.ErrorHere(string(closer))
+				return false
+			}
+
+			if buf == nil {
+				buf = bytes.NewBufferString(ps.Input[node.Start:end])
+			}
+
+			c, s := utf8.DecodeRuneInString(ps.Input[end+size:])
+			if c == 'u' {
+				if end+size+s+4 >= inputLen {
+					ps.Error.expected = "[a-f0-9]{4}"
+					ps.Error.pos = end + size + s
+					return false
+				}
+
+				r, ok := unhex(ps.Input[end+size+s : end+size+s+4])
+				if !ok {
+					ps.Error.expected = "[a-f0-9]"
+					ps.Error.pos = end + size + s
+					return false
+				}
+				buf.WriteRune(r)
+				end += size + s + 4
+			} else {
+				buf.WriteRune(c)
+				end += size + s
+			}
+		case closer:
+			if buf == nil {
+				node.Token = ps.Input[node.Start:end]
+				ps.Pos = end + size
+				return true
+			}
+			ps.Pos = end + size
+			node.Token = buf.String()
+			return true
+		default:
+			end += size
+			if buf != nil {
+				buf.WriteRune(current)
+			}
+		}
+	}
+	ps.ErrorHere(string(closer))
+	return false
+}
+
 // StringLit matches a quoted string and returns it in .Token. It may contain:
 //  - unicode
-//  - escaped characters, eg \" or \n
+//  - escaped characters, eg \"
 //  - unicode sequences, eg \uBEEF
+// allowedQuotes is the list of allowed quote characters; both the opening and closing quotes will be the same character from this string
 func StringLit(allowedQuotes string) Parser {
 	return NewParser("string literal", func(ps *State, node *Result) {
 		ps.WS(ps)
 
-		if !stringContainsByte(allowedQuotes, ps.Input[ps.Pos]) {
+		opener, size := utf8.DecodeRuneInString(ps.Input[ps.Pos:])
+		if !stringContainsRune(allowedQuotes, opener) {
 			ps.ErrorHere(allowedQuotes)
 			return
 		}
-		quote := ps.Input[ps.Pos]
+		node.Start = ps.Pos + size
+		stringImpl(ps, node, opener)
+		//if !matched {
+		//	ps.ErrorHere(string(opener))
+		//}
+	})
+}
 
-		var end = ps.Pos + 1
+// UnicodeStringLiteral matches a quoted string and returns it in .Token. It may contain:
+//  - unicode
+//  - escaped characters, eg \"
+//  - unicode sequences, eg \uBEEF
+// The opening and closing quote character may be any matched pair of
+// unicode characters from the Pi/Pf categories, or from the Ps/Pe
+// categories, plus angle brackets, or if they may be a punctuation
+// character, as long as they are the same punctuation character.
+func UnicodeStringLiteral() Parser {
+	return CustomStringLiteral(IsValidRegexpDelimiter)
+}
 
-		inputLen := len(ps.Input)
-		var buf *bytes.Buffer
+// CustomStringLiteral matches a quoted string and returns it in .Token. It may contain:
+//  - unicode
+//  - escaped characters, eg \"
+//  - unicode sequences, eg \uBEEF
+// The opening and closing quotes are validated by the isValid
+// function you pass in. This function should return true if its
+// argument is a valid opening quote character, plus the correct
+// closing quote character that ends the string. See
+// IsValidRegexpDelimiter.
+func CustomStringLiteral(isValid func(rune) (bool, rune)) Parser {
+	return NewParser("string literal", func(ps *State, node *Result) {
+		ps.WS(ps)
 
-		for end < inputLen {
-			switch ps.Input[end] {
-			case '\\':
-				if end+1 >= inputLen {
-					ps.ErrorHere(string(quote))
-					return
-				}
+		opener, size := utf8.DecodeRuneInString(ps.Input[ps.Pos:])
+		valid, closer := isValid(opener)
+		if !valid {
+			ps.ErrorHere("string delimiter")
+			return
+		}
+		node.Start = ps.Pos + size
+		matched := stringImpl(ps, node, closer)
+		if !matched {
+			ps.ErrorHere(string("string delimiter"))
+		}
+	})
+}
 
-				if buf == nil {
-					buf = bytes.NewBufferString(ps.Input[ps.Pos+1 : end])
-				}
+func UnicodeRegexpMatchLiteral() Parser {
+	return CustomRegexpMatchLiteral(IsValidRegexpDelimiter)
+}
 
-				c := ps.Input[end+1]
-				if c == 'u' {
-					if end+6 >= inputLen {
-						ps.Error.expected = "[a-f0-9]{4}"
-						ps.Error.pos = end + 2
-						return
-					}
+func CustomRegexpMatchLiteral(isValid func(rune) (bool, rune)) Parser {
+	return NewParser("regexp match literal", func(ps *State, node *Result) {
+		ps.WS(ps)
 
-					r, ok := unhex(ps.Input[end+2 : end+6])
-					if !ok {
-						ps.Error.expected = "[a-f0-9]"
-						ps.Error.pos = end + 2
-						return
-					}
-					buf.WriteRune(r)
-					end += 6
-				} else {
-					buf.WriteByte(c)
-					end += 2
-				}
-			case quote:
-				if buf == nil {
-					node.Start = ps.Pos + 1
-					node.End = end
-					node.Token = ps.Input[ps.Pos+1 : end]
-					ps.Pos = end + 1
-					return
-				}
-				node.Token = buf.String()
-				node.Start = ps.Pos
-				node.End = ps.Pos + len(node.Token)
-				ps.Pos = end + 1
-				return
-			default:
-				if buf == nil {
-					if ps.Input[end] < 127 {
-						end++
-					} else {
-						_, w := utf8.DecodeRuneInString(ps.Input[end:])
-						end += w
-					}
-				} else {
-					r, w := utf8.DecodeRuneInString(ps.Input[end:])
-					end += w
-					buf.WriteRune(r)
-				}
-			}
+		opener, size := utf8.DecodeRuneInString(ps.Input[ps.Pos:])
+		valid, closer := isValid(opener)
+		if !valid {
+			ps.ErrorHere("regexp delimiter")
+			return
+		}
+		node.Start = ps.Pos + size
+		matched := stringImpl(ps, node, closer)
+		if !matched {
+			ps.ErrorHere(string(closer))
+		}
+	})
+}
+
+func UnicodeRegexpReplaceLiteral() Parser {
+	return CustomRegexpReplaceLiteral(IsValidRegexpDelimiter)
+}
+
+func CustomRegexpReplaceLiteral(isValid func(rune) (bool, rune)) Parser {
+	return NewParser("regexp replace literal", func(ps *State, node *Result) {
+		//		finalquote := false
+		//
+		ps.WS(ps)
+
+		child1 := *node
+		opener, size := utf8.DecodeRuneInString(ps.Input[ps.Pos:])
+		valid, closer := isValid(opener)
+		if !valid {
+			ps.ErrorHere("regexp delimiter")
+			return
+		}
+		ps.Pos += size
+		child1.Start = ps.Pos
+
+		matched := stringImpl(ps, &child1, closer)
+		if !matched {
+			ps.ErrorHere(string(closer))
+			return
 		}
 
-		ps.ErrorHere(string(quote))
+		child2 := *node
+		if closer != opener {
+			opener, size = utf8.DecodeRuneInString(ps.Input[ps.Pos:])
+			valid, closer = IsValidRegexpDelimiter(opener)
+			ps.Pos += size
+			if !valid {
+				ps.ErrorHere("regexp delimiter")
+				return
+			}
+		}
+		child2.Start = ps.Pos
+
+		matched = stringImpl(ps, &child2, closer)
+		if !matched {
+			ps.ErrorHere(string(closer))
+			return
+		}
+
+		node.Child = []Result{child1, child2}
 	})
 }
 
@@ -149,9 +256,10 @@ func NumberLit() Parser {
 	})
 }
 
-func stringContainsByte(s string, b byte) bool {
-	for i := 0; i < len(s); i++ {
-		if b == s[i] {
+func stringContainsRune(s string, r rune) bool {
+	runes := bytes.Runes([]byte(s))
+	for _, candidate := range runes {
+		if candidate == r {
 			return true
 		}
 	}
@@ -174,4 +282,49 @@ func unhex(b string) (v rune, ok bool) {
 	}
 
 	return v, true
+}
+
+var _PiPf = map[rune]rune{
+	'«': '»', '‘': '’', '“': '”', '‹': '›', '⸂': '⸃', '⸄': '⸅', '⸉': '⸊',
+	'⸌': '⸍', '⸜': '⸝', '⸠': '⸡',
+}
+
+var _PsPf = map[rune]rune{
+	'‚': '’', '„': '”',
+}
+
+var _PsPe = map[rune]rune{
+	'(': ')', '[': ']', '{': '}', '༺': '༻', '༼': '༽', '᚛': '᚜', '⁅': '⁆',
+	'⁽': '⁾', '₍': '₎', '❨': '❩', '❪': '❫', '❬': '❭', '❮': '❯', '❰': '❱',
+	'❲': '❳', '❴': '❵', '⟅': '⟆', '⟦': '⟧', '⟨': '⟩', '⟪': '⟫', '⦃': '⦄',
+	'⦅': '⦆', '⦇': '⦈', '⦉': '⦊', '⦋': '⦌', '⦑': '⦒', '⦓': '⦔', '⦕': '⦖',
+	'⦗': '⦘', '⧘': '⧙', '⧚': '⧛', '⧼': '⧽', '〈': '〉', '《': '》',
+	'「': '」', '『': '』', '【': '】', '〔': '〕', '〖': '〗', '〘': '〙',
+	'〚': '〛', '〝': '〞', '︗': '︘', '︵': '︶', '︷': '︸', '︹': '︺',
+	'︻': '︼', '︽': '︾', '︿': '﹀', '﹁': '﹂', '﹃': '﹄', '﹇': '﹈',
+	'﹙': '﹚', '﹛': '﹜', '﹝': '﹞', '（': '）', '［': '］', '｛': '｝',
+	'｟': '｠', '｢': '｣', '⸨': '⸩',
+}
+
+var _SmSm = map[rune]rune{
+	'<': '>',
+}
+
+// IsValidRegexpDelimiter allows quote taken from the set of unicode
+// punctuation characters, plus angle brackets (which are actually
+// math symbols). It ensures that the closing quote character will be
+// symmetrically paired with the opening character if possible.
+func IsValidRegexpDelimiter(r rune) (bool, rune) {
+	var close rune
+	var exists bool
+	for _, m := range []map[rune]rune{_PiPf, _PsPf, _PsPe, _SmSm} {
+		close, exists = m[r]
+		if exists {
+			return true, close
+		}
+	}
+	if unicode.IsPunct(r) || r == '>' {
+		return true, r
+	}
+	return false, -1
 }
