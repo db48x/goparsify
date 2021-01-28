@@ -43,7 +43,12 @@ func stringImpl(ps *State, node *Result, closer rune) bool {
 				buf.WriteRune(r)
 				end += size + s + 4
 			} else {
-				buf.WriteRune(c)
+				replacement, ok := _Escapes[c]
+				if ok {
+					buf.WriteRune(replacement)
+				} else {
+					buf.WriteRune(c)
+				}
 				end += size + s
 			}
 		case closer:
@@ -308,6 +313,11 @@ var _PsPe = map[rune]rune{
 
 var _SmSm = map[rune]rune{
 	'<': '>',
+}
+
+var _Escapes = map[rune]rune{
+	'a': '\a', 'b': '\b', 'f': '\f', 'n': '\n', 'r': '\r', 't': '\t',
+	'v': '\v',
 }
 
 // IsValidRegexpDelimiter allows quote taken from the set of unicode

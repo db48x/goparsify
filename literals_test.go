@@ -56,6 +56,12 @@ func TestStringLit(t *testing.T) {
 		require.Equal(t, ``, p.Get())
 	})
 
+	t.Run("test escaped whitespace", func(t *testing.T) {
+		result, p := runParser(`"hello\tworld"`, parser)
+		require.Equal(t, `hello	world`, result.Token)
+		require.Equal(t, ``, p.Get())
+	})
+
 	t.Run("test unicode chars", func(t *testing.T) {
 		result, p := runParser(`"hello 👺 my little goblin"`, parser)
 		require.Equal(t, `hello 👺 my little goblin`, result.Token)
