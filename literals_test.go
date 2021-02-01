@@ -51,8 +51,8 @@ func TestStringLit(t *testing.T) {
 	})
 
 	t.Run("test escaping", func(t *testing.T) {
-		result, p := runParser(`"hello \"world\""`, parser)
-		require.Equal(t, `hello "world"`, result.Token)
+		result, p := runParser(`"hello \"w\orld\""`, parser)
+		require.Equal(t, `hello "w\orld"`, result.Token)
 		require.Equal(t, ``, p.Get())
 	})
 

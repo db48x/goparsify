@@ -7,7 +7,7 @@ import (
 	"unicode/utf8"
 )
 
-func stringImpl(ps *State, node *Result, closer rune) bool {
+func stringImpl(ps *State, node *Result, closer rune, escapes map[rune]rune) bool {
 	var end = node.Start
 
 	inputLen := len(ps.Input)
@@ -43,11 +43,17 @@ func stringImpl(ps *State, node *Result, closer rune) bool {
 				buf.WriteRune(r)
 				end += size + s + 4
 			} else {
-				replacement, ok := _Escapes[c]
-				if ok {
-					buf.WriteRune(replacement)
-				} else {
+				if c == closer {
 					buf.WriteRune(c)
+				} else {
+					replacement, ok := escapes[c]
+					if ok {
+						buf.WriteRune(replacement)
+					} else {
+						// write both the slash and the following character
+						buf.WriteRune(current)
+						buf.WriteRune(c)
+					}
 				}
 				end += size + s
 			}
@@ -73,9 +79,11 @@ func stringImpl(ps *State, node *Result, closer rune) bool {
 
 // StringLit matches a quoted string and returns it in .Token. It may contain:
 //  - unicode
-//  - escaped characters, eg \"
+//  - escaped characters, eg \", \n, \t
 //  - unicode sequences, eg \uBEEF
-// allowedQuotes is the list of allowed quote characters; both the opening and closing quotes will be the same character from this string
+// allowedQuotes is the list of allowed quote characters; both the
+// opening and closing quotes will be the same character from this
+// string
 func StringLit(allowedQuotes string) Parser {
 	return NewParser("string literal", func(ps *State, node *Result) {
 		ps.WS(ps)
@@ -86,35 +94,35 @@ func StringLit(allowedQuotes string) Parser {
 			return
 		}
 		node.Start = ps.Pos + size
-		stringImpl(ps, node, opener)
-		//if !matched {
-		//	ps.ErrorHere(string(opener))
-		//}
+		stringImpl(ps, node, opener, _Escapes)
 	})
 }
 
 // UnicodeStringLiteral matches a quoted string and returns it in .Token. It may contain:
 //  - unicode
-//  - escaped characters, eg \"
+//  - escaped characters, eg \", \n, \t
 //  - unicode sequences, eg \uBEEF
 // The opening and closing quote character may be any matched pair of
 // unicode characters from the Pi/Pf categories, or from the Ps/Pe
 // categories, plus angle brackets, or if they may be a punctuation
 // character, as long as they are the same punctuation character.
 func UnicodeStringLiteral() Parser {
-	return CustomStringLiteral(IsValidRegexpDelimiter)
+	return CustomStringLiteral(IsValidRegexpDelimiter, _Escapes)
 }
 
 // CustomStringLiteral matches a quoted string and returns it in .Token. It may contain:
 //  - unicode
-//  - escaped characters, eg \"
+//  - escaped characters, eg \", \n, \t
 //  - unicode sequences, eg \uBEEF
 // The opening and closing quotes are validated by the isValid
 // function you pass in. This function should return true if its
 // argument is a valid opening quote character, plus the correct
 // closing quote character that ends the string. See
 // IsValidRegexpDelimiter.
-func CustomStringLiteral(isValid func(rune) (bool, rune)) Parser {
+//
+// The only valid escape characters are those defined in the escapes
+// argument, plus one for the closer returned by isValid.
+func CustomStringLiteral(isValid func(rune) (bool, rune), escapes map[rune]rune) Parser {
 	return NewParser("string literal", func(ps *State, node *Result) {
 		ps.WS(ps)
 
@@ -125,7 +133,7 @@ func CustomStringLiteral(isValid func(rune) (bool, rune)) Parser {
 			return
 		}
 		node.Start = ps.Pos + size
-		matched := stringImpl(ps, node, closer)
+		matched := stringImpl(ps, node, closer, escapes)
 		if !matched {
 			ps.ErrorHere(string("string delimiter"))
 		}
@@ -133,10 +141,10 @@ func CustomStringLiteral(isValid func(rune) (bool, rune)) Parser {
 }
 
 func UnicodeRegexpMatchLiteral() Parser {
-	return CustomRegexpMatchLiteral(IsValidRegexpDelimiter)
+	return CustomRegexpMatchLiteral(IsValidRegexpDelimiter, _Escapes)
 }
 
-func CustomRegexpMatchLiteral(isValid func(rune) (bool, rune)) Parser {
+func CustomRegexpMatchLiteral(isValid func(rune) (bool, rune), escapes map[rune]rune) Parser {
 	return NewParser("regexp match literal", func(ps *State, node *Result) {
 		ps.WS(ps)
 
@@ -147,7 +155,7 @@ func CustomRegexpMatchLiteral(isValid func(rune) (bool, rune)) Parser {
 			return
 		}
 		node.Start = ps.Pos + size
-		matched := stringImpl(ps, node, closer)
+		matched := stringImpl(ps, node, closer, escapes)
 		if !matched {
 			ps.ErrorHere(string(closer))
 		}
@@ -155,13 +163,11 @@ func CustomRegexpMatchLiteral(isValid func(rune) (bool, rune)) Parser {
 }
 
 func UnicodeRegexpReplaceLiteral() Parser {
-	return CustomRegexpReplaceLiteral(IsValidRegexpDelimiter)
+	return CustomRegexpReplaceLiteral(IsValidRegexpDelimiter, _Escapes)
 }
 
-func CustomRegexpReplaceLiteral(isValid func(rune) (bool, rune)) Parser {
+func CustomRegexpReplaceLiteral(isValid func(rune) (bool, rune), escapes map[rune]rune) Parser {
 	return NewParser("regexp replace literal", func(ps *State, node *Result) {
-		//		finalquote := false
-		//
 		ps.WS(ps)
 
 		child1 := *node
@@ -174,7 +180,7 @@ func CustomRegexpReplaceLiteral(isValid func(rune) (bool, rune)) Parser {
 		ps.Pos += size
 		child1.Start = ps.Pos
 
-		matched := stringImpl(ps, &child1, closer)
+		matched := stringImpl(ps, &child1, closer, escapes)
 		if !matched {
 			ps.ErrorHere(string(closer))
 			return
@@ -192,7 +198,7 @@ func CustomRegexpReplaceLiteral(isValid func(rune) (bool, rune)) Parser {
 		}
 		child2.Start = ps.Pos
 
-		matched = stringImpl(ps, &child2, closer)
+		matched = stringImpl(ps, &child2, closer, _Escapes)
 		if !matched {
 			ps.ErrorHere(string(closer))
 			return
