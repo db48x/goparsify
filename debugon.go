@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/oec/goparsify/debug"
+	"github.com/db48x/goparsify/debug"
 )
 
 var log io.Writer = nil

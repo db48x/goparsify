@@ -3,7 +3,7 @@ package calc
 import (
 	"fmt"
 
-	. "github.com/oec/goparsify"
+	. "github.com/db48x/goparsify"
 )
 
 var (

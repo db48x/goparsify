@@ -7,8 +7,8 @@ import (
 	"runtime"
 	"runtime/pprof"
 
-	"github.com/oec/goparsify"
-	"github.com/oec/goparsify/json"
+	"github.com/db48x/goparsify"
+	"github.com/db48x/goparsify/json"
 )
 
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
